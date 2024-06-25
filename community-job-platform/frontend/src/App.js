@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { debounce } from 'lodash';
 import Header from './components/Header';
 import JobList from './components/JobList';
 import JobDetail from './components/JobDetail';
@@ -16,9 +17,11 @@ import EmployerJobManagement from './components/EmployerJobManagement';
 import ChangePassword from './components/ChangePassword';
 import ApplicationManagement from './components/ApplicationManagement';
 import AdvancedSearch from './components/AdvancedSearch';
-import Messaging from './components/Messaging';
 import BookmarkedJobs from './components/BookmarkedJobs';
 import { sendNewJobNotification, sendNewApplicationNotification, sendApplicationStatusUpdateNotification } from './utils/emailService';
+
+// Lazy load the Messaging component
+const Messaging = lazy(() => import('./components/Messaging'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -61,7 +64,7 @@ function App() {
     setAllUsers(storedUsers);
   }, []);
 
-  const handleApply = (jobId) => {
+  const handleApply = useCallback((jobId) => {
     const newApplication = {
       id: Date.now(),
       jobId: jobId,
@@ -80,9 +83,9 @@ function App() {
     sendNewApplicationNotification(newApplication, job, employer);
     
     console.log(`Job ${jobId} に応募しました`);
-  };
+  }, [applications, user, jobs, allUsers]);
 
-  const handleUpdateApplicationStatus = (applicationId, newStatus) => {
+  const handleUpdateApplicationStatus = useCallback((applicationId, newStatus) => {
     const updatedApplications = applications.map(app => 
       app.id === applicationId ? { ...app, status: newStatus } : app
     );
@@ -93,9 +96,9 @@ function App() {
     const job = jobs.find(j => j.id === updatedApplication.jobId);
     const applicant = allUsers.find(u => u.id === updatedApplication.applicantId);
     sendApplicationStatusUpdateNotification(updatedApplication, job, applicant);
-  };
+  }, [applications, jobs, allUsers]);
 
-  const addJob = (newJob) => {
+  const addJob = useCallback((newJob) => {
     const jobWithId = { ...newJob, id: Date.now(), date: new Date().toISOString(), employerId: user.id };
     const updatedJobs = [...jobs, jobWithId];
     setJobs(updatedJobs);
@@ -103,41 +106,41 @@ function App() {
 
     const jobSeekers = allUsers.filter(u => u.role === 'jobseeker');
     sendNewJobNotification(jobWithId, jobSeekers);
-  };
+  }, [jobs, user, allUsers]);
 
-  const editJob = (id, updatedJob) => {
+  const editJob = useCallback((id, updatedJob) => {
     const updatedJobs = jobs.map(job => job.id === id ? { ...job, ...updatedJob } : job);
     setJobs(updatedJobs);
     localStorage.setItem('jobs', JSON.stringify(updatedJobs));
-  };
+  }, [jobs]);
 
-  const deleteJob = (id) => {
+  const deleteJob = useCallback((id) => {
     const updatedJobs = jobs.filter(job => job.id !== id);
     setJobs(updatedJobs);
     localStorage.setItem('jobs', JSON.stringify(updatedJobs));
-  };
+  }, [jobs]);
 
-  const handleLogin = (userData) => {
+  const handleLogin = useCallback((userData) => {
     setUser(userData);
     setBookmarkedJobs(userData.bookmarkedJobs || []);
     localStorage.setItem('user', JSON.stringify(userData));
-  };
+  }, []);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     setUser(null);
     setBookmarkedJobs([]);
     localStorage.removeItem('user');
-  };
+  }, []);
 
-  const handleUpdateUser = (updatedUser) => {
+  const handleUpdateUser = useCallback((updatedUser) => {
     setUser(updatedUser);
     localStorage.setItem('user', JSON.stringify(updatedUser));
     const updatedUsers = allUsers.map(u => u.id === updatedUser.id ? updatedUser : u);
     setAllUsers(updatedUsers);
     localStorage.setItem('users', JSON.stringify(updatedUsers));
-  };
+  }, [allUsers]);
 
-  const handleChangePassword = (currentPassword, newPassword) => {
+  const handleChangePassword = useCallback((currentPassword, newPassword) => {
     return new Promise((resolve, reject) => {
       const storedUser = JSON.parse(localStorage.getItem('user'));
       if (storedUser && storedUser.password === currentPassword) {
@@ -149,63 +152,74 @@ function App() {
         reject(new Error('現在のパスワードが正しくありません。'));
       }
     });
-  };
+  }, []);
 
-  const handleAdvancedSearch = (filters) => {
+  const handleAdvancedSearch = useCallback((filters) => {
     setAdvancedFilters(filters);
     setCurrentPage(1);
-  };
+  }, []);
 
-  const handleBookmark = (jobId) => {
-    let updatedBookmarks;
-    if (bookmarkedJobs.includes(jobId)) {
-      updatedBookmarks = bookmarkedJobs.filter(id => id !== jobId);
-    } else {
-      updatedBookmarks = [...bookmarkedJobs, jobId];
-    }
-    setBookmarkedJobs(updatedBookmarks);
-    const updatedUser = { ...user, bookmarkedJobs: updatedBookmarks };
-    setUser(updatedUser);
-    localStorage.setItem('user', JSON.stringify(updatedUser));
-  };
+  const handleBookmark = useCallback((jobId) => {
+    setBookmarkedJobs(prev => {
+      let updatedBookmarks;
+      if (prev.includes(jobId)) {
+        updatedBookmarks = prev.filter(id => id !== jobId);
+      } else {
+        updatedBookmarks = [...prev, jobId];
+      }
+      const updatedUser = { ...user, bookmarkedJobs: updatedBookmarks };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      return updatedBookmarks;
+    });
+  }, [user]);
 
-  const filteredJobs = jobs.filter(job => {
-    const matchesSearch = 
-      job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      job.location.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesCategory = categoryFilter === '' || job.category === categoryFilter;
-    
-    const matchesAdvancedFilters = 
-      (!advancedFilters.location || job.location.toLowerCase().includes(advancedFilters.location.toLowerCase())) &&
-      (!advancedFilters.category || job.category === advancedFilters.category) &&
-      (!advancedFilters.minSalary || job.salary >= parseInt(advancedFilters.minSalary)) &&
-      (!advancedFilters.maxSalary || job.salary <= parseInt(advancedFilters.maxSalary)) &&
-      (!advancedFilters.jobType || job.jobType === advancedFilters.jobType) &&
-      (!advancedFilters.experienceLevel || job.experienceLevel === advancedFilters.experienceLevel);
+  const filteredJobs = useMemo(() => {
+    return jobs.filter(job => {
+      const matchesSearch = 
+        job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.location.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesCategory = categoryFilter === '' || job.category === categoryFilter;
+      
+      const matchesAdvancedFilters = 
+        (!advancedFilters.location || job.location.toLowerCase().includes(advancedFilters.location.toLowerCase())) &&
+        (!advancedFilters.category || job.category === advancedFilters.category) &&
+        (!advancedFilters.minSalary || job.salary >= parseInt(advancedFilters.minSalary)) &&
+        (!advancedFilters.maxSalary || job.salary <= parseInt(advancedFilters.maxSalary)) &&
+        (!advancedFilters.jobType || job.jobType === advancedFilters.jobType) &&
+        (!advancedFilters.experienceLevel || job.experienceLevel === advancedFilters.experienceLevel);
 
-    return matchesSearch && matchesCategory && matchesAdvancedFilters;
-  });
+      return matchesSearch && matchesCategory && matchesAdvancedFilters;
+    });
+  }, [jobs, searchTerm, categoryFilter, advancedFilters]);
 
-  const sortedJobs = [...filteredJobs].sort((a, b) => {
-    switch (sortCriteria) {
-      case 'date':
-        return new Date(b.date) - new Date(a.date);
-      case 'title':
-        return a.title.localeCompare(b.title);
-      case 'company':
-        return a.company.localeCompare(b.company);
-      default:
-        return 0;
-    }
-  });
+  const sortedJobs = useMemo(() => {
+    return [...filteredJobs].sort((a, b) => {
+      switch (sortCriteria) {
+        case 'date':
+          return new Date(b.date) - new Date(a.date);
+        case 'title':
+          return a.title.localeCompare(b.title);
+        case 'company':
+          return a.company.localeCompare(b.company);
+        default:
+          return 0;
+      }
+    });
+  }, [filteredJobs, sortCriteria]);
 
   const indexOfLastJob = currentPage * jobsPerPage;
   const indexOfFirstJob = indexOfLastJob - jobsPerPage;
   const currentJobs = sortedJobs.slice(indexOfFirstJob, indexOfLastJob);
 
-  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+  const paginate = useCallback((pageNumber) => setCurrentPage(pageNumber), []);
+
+  const debouncedSetSearchTerm = useCallback(
+    debounce((value) => setSearchTerm(value), 300),
+    []
+  );
 
   return (
     <Router basename="/jobmatch">
@@ -214,7 +228,7 @@ function App() {
         <Routes>
           <Route path="/" element={
             <>
-              <SearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+              <SearchBar searchTerm={searchTerm} setSearchTerm={debouncedSetSearchTerm} />
               <AdvancedSearch onSearch={handleAdvancedSearch} />
               <CategoryFilter categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter} />
               <SortSelect sortCriteria={sortCriteria} setSortCriteria={setSortCriteria} />
@@ -257,7 +271,13 @@ function App() {
               onUpdateStatus={handleUpdateApplicationStatus} 
             /> : <Navigate to="/login" />} 
           />
-          <Route path="/messaging" element={user ? <Messaging user={user} allUsers={allUsers} /> : <Navigate to="/login" />} />
+          <Route path="/messaging" element={
+            user ? (
+              <Suspense fallback={<div>Loading...</div>}>
+                <Messaging user={user} allUsers={allUsers} />
+              </Suspense>
+            ) : <Navigate to="/login" />
+          } />
           <Route path="/bookmarked-jobs" element={user ? 
             <BookmarkedJobs 
               bookmarkedJobs={bookmarkedJobs} 
