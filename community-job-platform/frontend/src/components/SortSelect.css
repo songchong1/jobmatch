@@ -1,0 +1,10 @@
+.sort-select {
+  margin: 20px 0;
+}
+
+.sort-select select {
+  padding: 5px 10px;
+  font-size: 16px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}

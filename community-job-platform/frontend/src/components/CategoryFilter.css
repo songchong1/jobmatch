@@ -1,0 +1,10 @@
+.category-filter {
+  margin: 20px 0;
+}
+
+.category-filter select {
+  padding: 5px 10px;
+  font-size: 16px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
